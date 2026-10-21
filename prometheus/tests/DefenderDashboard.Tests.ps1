@@ -56,4 +56,23 @@ Describe 'Read-only Defender dashboard boundary' {
         $r.Body.machines.status | Should -Be 'ok'
         $r.Body.summary.total | Should -Be 2
     }
+    It 'preserves the ARM resource slash and filters subscriptions to the selected tenant' {
+        Mock Get-GraphToken {
+            if ($scope -ne 'https://management.azure.com//.default') { throw 'ARM resource audience lost its trailing slash' }
+            @{ Authorization = 'Bearer test' }
+        }
+        Mock Invoke-RestMethod {
+            if ($Uri -like '*/subscriptions?*') {
+                @{ value = @(
+                        @{ subscriptionId = '11111111-1111-1111-1111-111111111111'; tenantId = $script:customer; state = 'Enabled' },
+                        @{ subscriptionId = '22222222-2222-2222-2222-222222222222'; tenantId = 'other-tenant'; state = 'Enabled' }
+                    ) }
+            } else { @{ value = @() } }
+        }
+        $r = Invoke-ListDefenderDashboard -Request @{ Method = 'GET'; Query = @{ Workload = 'cloud'; TenantFilter = $script:customer } }
+        $r.Body.subscriptions.status | Should -Be 'ok'
+        @($r.Body.subscriptions.data).Count | Should -Be 1
+        @($r.Body.items).Count | Should -Be 1
+        Should -Invoke Get-GraphToken -Times 6
+    }
 }

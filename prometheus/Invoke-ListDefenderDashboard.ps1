@@ -62,9 +62,10 @@ function Invoke-ListDefenderDashboard {
             return @{ status = 'ok'; data = @($Data); checkedAt = $Checked }
         } catch {
             $Code = [int]$_.Exception.Response.StatusCode
+            $IdentityCode = [regex]::Match([string]$_.Exception.Message, 'AADSTS\d+').Value
             return @{
                 status = $(if ($Code -eq 403) { 'forbidden' } else { 'error' })
-                code = "cipp_source_$Code"
+                code = $(if ($IdentityCode) { "cipp_$IdentityCode" } else { "cipp_source_$Code" })
                 message = 'CIPP could not read this source. The administrator must check its SAM consent, GDAP role, Azure RBAC or workload availability.'
                 checkedAt = $Checked
             }
@@ -84,7 +85,9 @@ function Invoke-ListDefenderDashboard {
         } else { $null }
         $Result = @{ machines = $Machines; alerts = $Alerts; summary = $Summary }
     } else {
-        $Scope = 'https://management.azure.com/.default'
+        # ARM's resource identifier includes its trailing slash. Preserve it
+        # before appending /.default so Entra resolves the consented resource.
+        $Scope = 'https://management.azure.com//.default'
         $Subscriptions = Read-DashboardSource -Uri 'https://management.azure.com/subscriptions?api-version=2022-12-01' -Scope $Scope
         $Items = @()
         if ($Subscriptions.status -eq 'ok') {
