@@ -91,6 +91,11 @@ def prepare(source):
         raise ValueError("Official release Dockerfile is missing")
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / SOURCE_FILE, destination)
+    dashboard = source / 'backend/Modules/CIPPHTTP/Public/Entrypoints/HTTP Functions/Security/Defender/Invoke-ListDefenderDashboard.ps1'
+    if dashboard.exists():
+        raise ValueError('Upstream already contains the dashboard endpoint; review required')
+    dashboard.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ROOT / 'Invoke-ListDefenderDashboard.ps1', dashboard)
     for path, (_, encoded) in zip(CATALOGS, catalogs):
         (source / path).write_text(encoded, encoding="utf-8")
     return len(catalogs[0][0])
@@ -134,6 +139,9 @@ def smoke(app, version):
     for path in ("API/Modules/CIPPCore", "API/Modules/CIPPHTTP", "Frontend/index.html"):
         if not (app / path).exists():
             raise ValueError(f"Required runtime artifact missing: {path}")
+    http_module = next((app / 'API/Modules/CIPPHTTP').rglob('CIPPHTTP.psm1')).read_text(encoding='utf-8-sig')
+    if not re.search(r'function\s+Invoke-ListDefenderDashboard\s*\{', http_module, re.I):
+        raise ValueError('Read-only Defender dashboard endpoint is missing from the runtime module')
 
 
 if __name__ == "__main__":

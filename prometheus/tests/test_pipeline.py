@@ -103,6 +103,7 @@ class PipelineTests(unittest.TestCase):
             "API/Modules/CIPPStandards/CIPPStandards.psm1":
                 f"function {pipeline.FUNCTION} {{ 'FileSharingInChatsWithExternalUsers' }}",
             "API/Config/standards.json": json.dumps(backend_catalog),
+            "API/Modules/CIPPHTTP/CIPPHTTP.psm1": "function Invoke-ListDefenderDashboard {}",
             "Frontend/version.json": json.dumps({"version": "test", "tag": "latest"}),
             "Frontend/_next/static/app.js": f"standards.{pipeline.STANDARD}",
             "Frontend/index.html": "",
@@ -112,12 +113,18 @@ class PipelineTests(unittest.TestCase):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text)
         for name in ("API/Modules/CIPPCore", "API/Modules/CIPPHTTP"):
-            (app / name).mkdir(parents=True)
+            (app / name).mkdir(parents=True, exist_ok=True)
         return app
 
     def test_smoke_accepts_complete_container(self):
         app = self.write_packaged_app([{"name": f"standards.{pipeline.STANDARD}"}])
         pipeline.smoke(app, "test")
+
+    def test_smoke_rejects_missing_dashboard_endpoint(self):
+        app = self.write_packaged_app([{"name": f"standards.{pipeline.STANDARD}"}])
+        (app / 'API/Modules/CIPPHTTP/CIPPHTTP.psm1').write_text('function Other {}')
+        with self.assertRaisesRegex(ValueError, 'dashboard endpoint'):
+            pipeline.smoke(app, 'test')
 
     def test_smoke_rejects_container_missing_backend_catalog_entry(self):
         app = self.write_packaged_app([{"name": "standards.Existing"}])
