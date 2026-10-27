@@ -1316,3 +1316,7 @@ export const nativeMenuItems = [
     ],
   },
 ]
+
+// Prometheus Azure Virtual Desktop navigation.
+import { applyCustomMenuItems } from "../custom/menu";
+applyCustomMenuItems(nativeMenuItems);
