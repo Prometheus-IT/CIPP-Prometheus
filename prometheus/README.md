@@ -43,3 +43,13 @@ The pipeline currently supports this one custom standard. Adding another require
 To roll back application code, pin Azure to a previously published version image. Saved
 templates remain in Azure storage. Image rollback does not undo Microsoft 365 policy changes;
 select Disabled and remediate separately to reverse this sharing setting.
+
+
+
+## Defender dashboard current snapshot
+
+`Invoke-ListDefenderDashboard.ps1` retains its existing `Security.DefenderDashboard.Read` role and tenant checks. A new GET-only `security` workload adds four independent sources: Defender AV health (`/api/deviceavinfo`), secure configuration assessments (`/api/machines/SecureConfigurationsAssessmentByMachine`), Graph XDR incidents (`/v1.0/security/incidents`), and the same beta Intune `managedDevices?$expand=windowsProtectionState` read used by CIPP's existing `ListDefenderState`, with a narrower projection. Only relevant evidence is returned; no recovery keys or user details are exported. Pagination must preserve the exact HTTPS origin and API path. Failed sources remain errors/forbidden, never successful empty lists.
+
+This change does **not** modify consent, SAM grants, GDAP assignments, API clients/roles, tenant scope, other endpoints, the Teams standard, or the container workflow. It uses existing permissions only. Depending on current grants and licensing, individual sources can remain unavailable. Any additional consent needs a separate review and authorization. Required delegated read permissions are `Machine.Read` (AV JSON), `Vulnerability.Read` (assessments), `SecurityIncident.Read.All` (incidents), and `DeviceManagementManagedDevices.Read.All` (Intune), plus the corresponding workload/GDAP access. Beta Intune compatibility must be verified after deployment.
+
+Deploy this overlay before the dashboard snapshot change. On the dashboard, verify each returned source and a known device in each tenant, including a denied source and a denied tenant. A deployment of this overlay uses the shared CIPP container and can restart its worker even though the source change is isolated; schedule the release accordingly. Do not infer live workload access from passing fixture tests. Rollback is the existing versioned-image procedure.

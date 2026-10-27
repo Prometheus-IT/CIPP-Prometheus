@@ -27,6 +27,28 @@ Describe 'Read-only Defender dashboard boundary' {
         $r.StatusCode | Should -Be 404
         Should -Invoke Get-GraphToken -Times 0
     }
+    It 'keeps new security sources within the dashboard GET-only tenant boundary' {
+        $r = Invoke-ListDefenderDashboard -Request @{ Method = 'GET'; Query = @{ Workload = 'security'; TenantFilter = $script:customer } }
+        foreach ($key in @('avHealth','assessments','incidents','managedDevices')) { $r.Body[$key].status | Should -Be 'ok' }
+        Should -Invoke Invoke-RestMethod -Times 4 -Exactly -ParameterFilter { $Method -eq 'Get' -and $MaximumRedirection -eq 0 }
+        Should -Invoke Get-GraphToken -Times 4 -Exactly -ParameterFilter { $tenantid -eq $script:customer }
+    }
+    It 'projects only the required security evidence without credentials or personal details' {
+        Mock Invoke-RestMethod {
+            if ($Uri -like '*managedDevices*') {
+                @{ value = @(@{ operatingSystem='Windows';azureADDeviceId='entra';emailAddress='private@example.invalid';windowsProtectionState=@{realTimeProtectionEnabled=$true;tamperProtectionEnabled=$false;lastReportedDateTime='2026-10-27T10:00:00Z';secret='must-not-leak'};deviceHealthAttestationState=@{bitLockerStatus='On';issuedDateTime='2026-10-27T10:00:00Z';recoveryKey='must-not-leak'} }) }
+            } else { @{ value = @(@{ machineId='device';configurationName='Turn on tamper protection';deviceId='device';avMode='0';secret='must-not-leak' }) } }
+        }
+        $r = Invoke-ListDefenderDashboard -Request @{ Method='GET';Query=@{Workload='security';TenantFilter=$script:customer} }
+        ($r.Body | ConvertTo-Json -Depth 15) | Should -Not -Match 'must-not-leak|private@example|recoveryKey|emailAddress'
+        $r.Body.managedDevices.data[0].protection.tamperProtectionEnabled | Should -BeFalse
+    }
+    It 'blocks same-origin pagination to a different API path' {
+        Mock Invoke-RestMethod { @{ value=@();'@odata.nextLink'='https://api.security.microsoft.com/api/other' } }
+        $r = Invoke-ListDefenderDashboard -Request @{Method='GET';Query=@{Workload='security';TenantFilter=$script:customer}}
+        $r.Body.avHealth.status | Should -Be 'error'
+        Should -Invoke Invoke-RestMethod -Times 4 -Exactly
+    }
     It 'honors the API client tenant scope in customer discovery' {
         Mock Test-CIPPAccess { @($script:customer) }
         $r = Invoke-ListDefenderDashboard -Request @{ Method = 'GET'; Query = @{ Workload = 'customers' } }
