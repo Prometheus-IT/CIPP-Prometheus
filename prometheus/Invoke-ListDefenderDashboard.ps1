@@ -14,7 +14,7 @@ function Invoke-ListDefenderDashboard {
         return ([HttpResponseContext]@{ StatusCode = 405; Body = @{ error = 'Only GET is supported.' } })
     }
     $Workload = [string]$Request.Query.Workload
-    if ($Workload -notin @('customers', 'endpoints', 'cloud')) {
+    if ($Workload -notin @('customers', 'endpoints', 'cloud', 'security')) {
         return ([HttpResponseContext]@{ StatusCode = 400; Body = @{ error = 'Unknown workload.' } })
     }
     $Allowed = @(Test-CIPPAccess -Request $Request -TenantList)
@@ -39,11 +39,13 @@ function Invoke-ListDefenderDashboard {
     function Read-DashboardCollection {
         param([string]$Uri, [hashtable]$Headers)
         $Origin = ([uri]$Uri).GetLeftPart([System.UriPartial]::Authority)
+        $Path = ([uri]$Uri).AbsolutePath
+        $Path = ([uri]$Uri).AbsolutePath
         $Items = [System.Collections.Generic.List[object]]::new()
         $Pages = 0
         while ($Uri) {
             $Address = [uri]$Uri
-            if ($Address.GetLeftPart([System.UriPartial]::Authority) -cne $Origin -or $Address.UserInfo -or ++$Pages -gt 100) {
+            if ($Address.GetLeftPart([System.UriPartial]::Authority) -cne $Origin -or $Address.UserInfo -or $Address.AbsolutePath -cne $Path -or $Address.Fragment -or ++$Pages -gt 100) {
                 throw 'Invalid pagination address or page limit exceeded.'
             }
             $Page = Invoke-RestMethod -Uri $Uri -Method Get -Headers $Headers -TimeoutSec 25 -MaximumRedirection 0 -ErrorAction Stop
@@ -71,7 +73,40 @@ function Invoke-ListDefenderDashboard {
             }
         }
     }
-    if ($Workload -eq 'endpoints') {
+    if ($Workload -eq 'security') {
+        # Isolated dashboard reads, using EXISTING SAM grants only. Never modify
+        # consent, GDAP assignments, roles, settings or other CIPP endpoints.
+        $MdeScope = 'https://api.securitycenter.microsoft.com/.default'
+        $Av = Read-DashboardSource -Uri 'https://api.security.microsoft.com/api/deviceavinfo' -Scope $MdeScope
+        if ($Av.status -eq 'ok') {
+            $Av.data = @($Av.data | Select-Object machineId, avMode, avSignatureVersion, avSignatureUpdateTime, avIsSignatureUpToDate, dataRefreshTimestamp)
+        }
+        $Assessments = Read-DashboardSource -Uri 'https://api.security.microsoft.com/api/machines/SecureConfigurationsAssessmentByMachine' -Scope $MdeScope
+        if ($Assessments.status -eq 'ok') {
+            # Return only security feature evidence, not unrelated vulnerability data.
+            # The dashboard applies exact-name matching before assigning any status.
+            $Assessments.data = @($Assessments.data | Where-Object {
+                $_.configurationName -match 'real.time protection|tamper protection|firewall|bitlocker|credential guard|virtualization.based security|hypervisor.protected code integrity'
+            } | Select-Object deviceId, configurationId, configurationName, isApplicable, isCompliant, timestamp)
+        }
+        $Incidents = Read-DashboardSource -Uri 'https://graph.microsoft.com/v1.0/security/incidents?$filter=status ne %27resolved%27&$select=id,displayName,severity,status,assignedTo,createdDateTime,lastUpdateDateTime' -Scope 'https://graph.microsoft.com/.default'
+        if ($Incidents.status -eq 'ok') {
+            $Incidents.data = @($Incidents.data | Select-Object id, displayName, severity, status, assignedTo, createdDateTime, lastUpdateDateTime)
+        }
+        # Same read contract already used by CIPP's ListDefenderState. Keep the
+        # projection minimal: no user details, recovery keys or action results.
+        $Managed = Read-DashboardSource -Uri 'https://graph.microsoft.com/beta/deviceManagement/managedDevices?$expand=windowsProtectionState&$select=id,azureADDeviceId,operatingSystem,windowsProtectionState,deviceHealthAttestationState' -Scope 'https://graph.microsoft.com/.default'
+        if ($Managed.status -eq 'ok') {
+            $Managed.data = @($Managed.data | Where-Object { $_.operatingSystem -eq 'Windows' } | ForEach-Object {
+                @{
+                    azureADDeviceId = $_.azureADDeviceId
+                    protection = $(if ($_.windowsProtectionState) { $_.windowsProtectionState | Select-Object realTimeProtectionEnabled, tamperProtectionEnabled, lastReportedDateTime } else { $null })
+                    attestation = $(if ($_.deviceHealthAttestationState) { $_.deviceHealthAttestationState | Select-Object bitLockerStatus, issuedDateTime } else { $null })
+                }
+            })
+        }
+        $Result = @{ avHealth = $Av; assessments = $Assessments; incidents = $Incidents; managedDevices = $Managed }
+    } elseif ($Workload -eq 'endpoints') {
         $Machines = Read-DashboardSource -Uri 'https://api.securitycenter.microsoft.com/api/machines?$top=10000' -Scope 'https://api.securitycenter.microsoft.com/.default'
         $Alerts = Read-DashboardSource -Uri "https://api.securitycenter.microsoft.com/api/alerts?`$filter=status ne 'Resolved'&`$top=1000" -Scope 'https://api.securitycenter.microsoft.com/.default'
         $Summary = if ($Machines.status -eq 'ok') {
