@@ -40,6 +40,13 @@ Assign tenant exceptions through the appropriate customer delta template.
 The pipeline currently supports this one custom standard. Adding another requires extending
 `pipeline.py` and its tests as well as adding the implementation and catalog entry.
 
+The Azure Virtual Desktop module is also copied from the fork's dedicated AVD folders into
+the released source. Its source and tests are included in the overlay hash. The publisher
+runs the 16 AVD backend tests and the portal tests, then verifies all compiled AVD exports,
+the three static portal pages and their action endpoints before publishing. See
+[`fork/AVD.md`](../fork/AVD.md) for customer Azure access requirements. The build does not
+deploy Lighthouse or change customer permissions.
+
 To roll back application code, pin Azure to a previously published version image. Saved
 templates remain in Azure storage. Image rollback does not undo Microsoft 365 policy changes;
 select Disabled and remediate separately to reverse this sharing setting.

@@ -13,6 +13,31 @@ STANDARD = "PrometheusTeamsExternalChatFiles"
 FUNCTION = f"Invoke-CIPPStandard{STANDARD}"
 SOURCE_FILE = f"{FUNCTION}.ps1"
 CATALOGS = ("frontend/src/data/standards.json", "backend/Config/standards.json")
+AVD_ROOTS = (
+    "backend/Modules/CIPPHTTP/Public/Custom/AVD",
+    "backend/Modules/CIPPHTTP/Public/Entrypoints/HTTP Functions/Custom/AVD",
+    "backend/Tests/Custom/PiAvd.Tests.ps1",
+    "frontend/src/custom/menu.jsx",
+    "frontend/src/custom/avd",
+    "frontend/src/pages/custom/avd",
+    "frontend/tests/custom",
+)
+AVD_PAGES = ("host-pools", "session-hosts", "sessions")
+AVD_MENU = "frontend/src/layouts/config.jsx"
+AVD_HOOK = ('\n// Prometheus Azure Virtual Desktop navigation.\n'
+            'import { applyCustomMenuItems } from "../custom/menu";\n'
+            'applyCustomMenuItems(nativeMenuItems);\n')
+
+
+def avd_overlay_files():
+    files = []
+    for name in AVD_ROOTS:
+        path = ROOT.parent / name
+        if not path.exists():
+            raise ValueError(f"AVD overlay input missing: {name}")
+        files.extend([path] if path.is_file() else
+                     sorted(p for p in path.rglob("*") if p.is_file()))
+    return files
 
 
 def api(path):
@@ -29,6 +54,7 @@ def overlay_hash():
     files = [p for p in ROOT.rglob("*") if p.is_file() and
              p.name != "build-state.json" and "__pycache__" not in p.parts]
     files.append(ROOT.parent / ".github/workflows/prometheus-container.yml")
+    files.extend(avd_overlay_files())
     for path in sorted(files):
         digest.update(path.relative_to(ROOT.parent).as_posix().encode())
         digest.update(b"\0")
@@ -89,6 +115,16 @@ def prepare(source):
         raise ValueError("Standards comparison contract changed")
     if not (source / "build/Dockerfile.release").is_file():
         raise ValueError("Official release Dockerfile is missing")
+    # Validate every addition and the small navigation patch before mutating source.
+    avd_files = avd_overlay_files()
+    for path in avd_files:
+        target = source / path.relative_to(ROOT.parent)
+        if target.exists():
+            raise ValueError(f"Upstream already contains an AVD overlay file: {target}")
+    menu_path = source / AVD_MENU
+    menu = menu_path.read_text(encoding="utf-8")
+    if not re.search(r"export\s+const\s+nativeMenuItems\s*=", menu) or "applyCustomMenuItems" in menu:
+        raise ValueError("AVD navigation contract changed; review before updating")
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / SOURCE_FILE, destination)
     dashboard = source / 'backend/Modules/CIPPHTTP/Public/Entrypoints/HTTP Functions/Security/Defender/Invoke-ListDefenderDashboard.ps1'
@@ -96,6 +132,11 @@ def prepare(source):
         raise ValueError('Upstream already contains the dashboard endpoint; review required')
     dashboard.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / 'Invoke-ListDefenderDashboard.ps1', dashboard)
+    for path in avd_files:
+        target = source / path.relative_to(ROOT.parent)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
+    menu_path.write_text(menu.rstrip() + "\n" + AVD_HOOK, encoding="utf-8")
     for path, (_, encoded) in zip(CATALOGS, catalogs):
         (source / path).write_text(encoded, encoding="utf-8")
     return len(catalogs[0][0])
@@ -142,6 +183,25 @@ def smoke(app, version):
     http_module = next((app / 'API/Modules/CIPPHTTP').rglob('CIPPHTTP.psm1')).read_text(encoding='utf-8-sig')
     if not re.search(r'function\s+Invoke-ListDefenderDashboard\s*\{', http_module, re.I):
         raise ValueError('Read-only Defender dashboard endpoint is missing from the runtime module')
+    http_manifest = next((app / 'API/Modules/CIPPHTTP').rglob('CIPPHTTP.psd1')).read_text(encoding='utf-8-sig')
+    wildcard_exports = re.search(r"FunctionsToExport\s*=\s*['\"]\*", http_manifest)
+    for path in avd_overlay_files():
+        if path.suffix != '.ps1' or 'Modules' not in path.parts:
+            continue
+        name = path.stem
+        if not re.search(rf'function\s+{re.escape(name)}\s*\{{', http_module, re.I):
+            raise ValueError(f'AVD function is missing from the runtime module: {name}')
+        if not wildcard_exports and name not in http_manifest:
+            raise ValueError(f'Runtime module does not export AVD function: {name}')
+    for page in AVD_PAGES:
+        route = app / 'Frontend/custom/avd' / page
+        if not route.with_suffix('.html').is_file() and not (route / 'index.html').is_file():
+            raise ValueError(f'AVD frontend page is missing from the built portal: {page}')
+    portal_js = '\n'.join(p.read_text(encoding='utf-8') for p in javascript)
+    for endpoint in ('ListPiAvdHostPools', 'ListPiAvdSessionHosts', 'ListPiAvdUserSessions',
+                     'ExecPiAvdSessionHost', 'ExecPiAvdUserSession'):
+        if endpoint not in portal_js:
+            raise ValueError(f'AVD frontend endpoint is missing from the built portal: {endpoint}')
 
 
 if __name__ == "__main__":
