@@ -4,7 +4,7 @@ Source: the Azure/AVD package prepared in Claude on 27 October 2026.
 
 These files add AVD helpers, API endpoints, portal pages, tests and an optional Lighthouse template. The existing Prometheus branch model, publisher and update workflows remain in place.
 
-The production publisher builds an upstream release and applies only the files copied by `prometheus/pipeline.py`. AVD build-overlay integration and live Azure validation are separate follow-up work; publishing this source branch does not deploy it or grant Azure permissions.
+The production publisher builds an exact upstream release and copies these AVD sources through `prometheus/pipeline.py`, then appends the navigation hook to that release's menu. AVD source and test changes contribute to the image version hash and trigger a build. The publisher runs the backend and frontend AVD tests and checks the compiled exports, three portal routes and action endpoints before promoting the image. Publishing the software does not deploy the optional Lighthouse template or grant Azure permissions. Live customer access still depends on existing Azure permissions.
 
 ## AVD module
 
