@@ -37,13 +37,18 @@ Global Teams Files policy. Report reads only; Remediate applies the explicit Ena
 Disabled choice and verifies the result. SharePoint and OneDrive restrictions still apply.
 Assign tenant exceptions through the appropriate customer delta template.
 
-The pipeline currently supports this one custom standard. Adding another requires extending
-`pipeline.py` and its tests as well as adding the implementation and catalog entry.
+`standards.json` also carries the four AVD standards (see [`fork/AVD.md`](../fork/AVD.md));
+their implementations live in the AVD overlay folders. `pipeline.py` refuses to build when a
+catalog entry has no implementation, and its tests check that each entry matches the
+function's comment block. Adding another standard requires the implementation, the catalog
+entry and its name in `AVD_STANDARDS` (or, for one copied from this folder, a `prepare` step).
 
-The Azure Virtual Desktop module is also copied from the fork's dedicated AVD folders into
-the released source. Its source and tests are included in the overlay hash. The publisher
-runs the 16 AVD backend tests and the portal tests, then verifies all compiled AVD exports,
-the three static portal pages and their action endpoints before publishing. See
+The Azure additions (AVD module, Lighthouse onboarding page, Windows 365 Cloud PC view and
+AVD standards) are also copied from the fork's dedicated folders into the released source.
+Their source and tests are included in the overlay hash. The publisher runs the 49 fork
+backend tests in `backend/Tests/Custom` and the portal tests, then verifies every compiled
+fork function in CIPPHTTP and CIPPStandards, the five static portal pages and their API
+endpoints before publishing. See
 [`fork/AVD.md`](../fork/AVD.md) for customer Azure access requirements. The build does not
 deploy Lighthouse or change customer permissions.
 

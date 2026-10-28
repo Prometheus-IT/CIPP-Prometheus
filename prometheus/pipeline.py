@@ -13,16 +13,34 @@ STANDARD = "PrometheusTeamsExternalChatFiles"
 FUNCTION = f"Invoke-CIPPStandard{STANDARD}"
 SOURCE_FILE = f"{FUNCTION}.ps1"
 CATALOGS = ("frontend/src/data/standards.json", "backend/Config/standards.json")
+# Fork source copied verbatim into the released tree. Every file here must be new to the
+# release (prepare refuses to overwrite upstream files) and is part of the overlay hash.
 AVD_ROOTS = (
     "backend/Modules/CIPPHTTP/Public/Custom/AVD",
+    "backend/Modules/CIPPHTTP/Public/Custom/Azure",
     "backend/Modules/CIPPHTTP/Public/Entrypoints/HTTP Functions/Custom/AVD",
-    "backend/Tests/Custom/PiAvd.Tests.ps1",
-    "frontend/src/custom/menu.jsx",
-    "frontend/src/custom/avd",
+    "backend/Modules/CIPPHTTP/Public/Entrypoints/HTTP Functions/Custom/Azure",
+    "backend/Modules/CIPPHTTP/Public/Entrypoints/HTTP Functions/Custom/W365",
+    "backend/Modules/CIPPStandards/Public/Custom/AVD",
+    "backend/Modules/CIPPStandards/Public/Standards/Custom/AVD",
+    "backend/Tests/Custom",
+    "frontend/src/custom",
     "frontend/src/pages/custom/avd",
+    "frontend/src/pages/custom/azure",
+    "frontend/src/pages/custom/w365",
     "frontend/tests/custom",
 )
-AVD_PAGES = ("host-pools", "session-hosts", "sessions")
+# Static portal routes that must exist in the built frontend.
+CUSTOM_PAGES = ("custom/avd/host-pools", "custom/avd/session-hosts", "custom/avd/sessions",
+                "custom/azure/lighthouse", "custom/w365/cloud-pcs")
+# API endpoints the built portal must call.
+CUSTOM_ENDPOINTS = ("ListPiAvdHostPools", "ListPiAvdSessionHosts", "ListPiAvdUserSessions",
+                    "ExecPiAvdSessionHost", "ExecPiAvdUserSession", "ListPiAzureLighthouseStatus",
+                    "ListPiAzureLighthouseTemplate", "ListPiCloudPCs")
+# Fork standards whose implementation lives in the AVD roots above (the Teams standard is
+# copied separately from prometheus/).
+AVD_STANDARDS = ("PiAvdScalingPowerManage", "PiAvdStartVMOnConnect", "PiAvdFslogixStorage",
+                 "PiAvdRdpProperties")
 AVD_MENU = "frontend/src/layouts/config.jsx"
 AVD_HOOK = ('\n// Prometheus Azure Virtual Desktop navigation.\n'
             'import { applyCustomMenuItems } from "../custom/menu";\n'
@@ -90,16 +108,27 @@ def resolve(force=False):
                          state.get("upstream_sha") != commit).lower()}
 
 
-def prepare(source):
-    source = Path(source).resolve()
+def standard_additions():
+    """Fork standards catalog, validated against the implementation files it describes."""
     additions = json.loads((ROOT / "standards.json").read_text(encoding="utf-8"))
-    if len(additions) != 1:
+    expected = [f"standards.{name}" for name in (STANDARD, *AVD_STANDARDS)]
+    if not isinstance(additions, list) or sorted(i.get("name") for i in additions) != sorted(expected):
         raise ValueError("Unexpected standards catalog format")
-    item = additions[0]
-    if item["name"] != f"standards.{STANDARD}" or not item["addedComponent"][0]["required"]:
+    item = next(i for i in additions if i["name"] == f"standards.{STANDARD}")
+    if not item["addedComponent"][0]["required"]:
         raise ValueError("Invalid custom standard metadata")
     if [o["value"] for o in item["addedComponent"][0]["options"]] != ["Enabled", "Disabled"]:
         raise ValueError("The standard must require an explicit Enabled/Disabled choice")
+    sources = {p.stem for p in avd_overlay_files() if p.suffix == ".ps1"}
+    for name in AVD_STANDARDS:
+        if f"Invoke-CIPPStandard{name}" not in sources:
+            raise ValueError(f"Fork standard {name} has a catalog entry but no implementation")
+    return additions
+
+
+def prepare(source):
+    source = Path(source).resolve()
+    additions = standard_additions()
     # The portal reads the frontend catalog; the executive report, template repair and
     # tests read the backend copy. Validate both catalogs before touching any source file.
     catalogs = [merged_catalog(source / path, additions) for path in CATALOGS]
@@ -147,10 +176,10 @@ def merged_catalog(path, additions):
     if not isinstance(catalog, list):
         raise ValueError(f"Unexpected standards catalog format: {path}")
     names = [i["name"] for i in catalog]
-    if len(names) != len(set(names)) or additions[0]["name"] in names:
+    if len(names) != len(set(names)) or any(i["name"] in names for i in additions):
         raise ValueError("Duplicate standard identifier; stop rather than overwrite")
     encoded = json.dumps(catalog + additions, indent=2, ensure_ascii=False) + "\n"
-    if json.loads(encoded)[:-1] != catalog:
+    if json.loads(encoded)[:len(catalog)] != catalog:
         raise ValueError("Existing upstream standards were modified")
     return catalog, encoded
 
@@ -172,34 +201,41 @@ def smoke(app, version):
     if metadata["version"] != version or metadata["tag"] != "latest":
         raise ValueError("Container version does not match the updater channel")
     javascript = list((app / "Frontend/_next").rglob("*.js"))
-    if not any(f"standards.{STANDARD}" in p.read_text(encoding="utf-8") for p in javascript):
-        raise ValueError("Custom standard is missing from the built portal catalog")
+    portal_js = '\n'.join(p.read_text(encoding='utf-8') for p in javascript)
     backend_catalog = json.loads((app / "API/Config/standards.json").read_text(encoding="utf-8"))
-    if not any(i.get("name") == f"standards.{STANDARD}" for i in backend_catalog):
-        raise ValueError("Custom standard is missing from the backend standards catalog")
+    for name in (STANDARD, *AVD_STANDARDS):
+        if f"standards.{name}" not in portal_js:
+            raise ValueError(f"Custom standard is missing from the built portal catalog: {name}")
+        if not any(i.get("name") == f"standards.{name}" for i in backend_catalog):
+            raise ValueError(f"Custom standard is missing from the backend standards catalog: {name}")
     for path in ("API/Modules/CIPPCore", "API/Modules/CIPPHTTP", "Frontend/index.html"):
         if not (app / path).exists():
             raise ValueError(f"Required runtime artifact missing: {path}")
-    http_module = next((app / 'API/Modules/CIPPHTTP').rglob('CIPPHTTP.psm1')).read_text(encoding='utf-8-sig')
+    modules = {}
+    for module_name in ('CIPPHTTP', 'CIPPStandards'):
+        module_root = app / 'API/Modules' / module_name
+        modules[module_name] = (
+            next(module_root.rglob(f'{module_name}.psm1')).read_text(encoding='utf-8-sig'),
+            next(module_root.rglob(f'{module_name}.psd1')).read_text(encoding='utf-8-sig'),
+        )
+    http_module = modules['CIPPHTTP'][0]
     if not re.search(r'function\s+Invoke-ListDefenderDashboard\s*\{', http_module, re.I):
         raise ValueError('Read-only Defender dashboard endpoint is missing from the runtime module')
-    http_manifest = next((app / 'API/Modules/CIPPHTTP').rglob('CIPPHTTP.psd1')).read_text(encoding='utf-8-sig')
-    wildcard_exports = re.search(r"FunctionsToExport\s*=\s*['\"]\*", http_manifest)
     for path in avd_overlay_files():
         if path.suffix != '.ps1' or 'Modules' not in path.parts:
             continue
+        module_name = path.parts[path.parts.index('Modules') + 1]
+        module_text, manifest_text = modules[module_name]
         name = path.stem
-        if not re.search(rf'function\s+{re.escape(name)}\s*\{{', http_module, re.I):
+        if not re.search(rf'function\s+{re.escape(name)}\s*\{{', module_text, re.I):
             raise ValueError(f'AVD function is missing from the runtime module: {name}')
-        if not wildcard_exports and name not in http_manifest:
+        if not re.search(r"FunctionsToExport\s*=\s*['\"]\*", manifest_text) and name not in manifest_text:
             raise ValueError(f'Runtime module does not export AVD function: {name}')
-    for page in AVD_PAGES:
-        route = app / 'Frontend/custom/avd' / page
+    for page in CUSTOM_PAGES:
+        route = app / 'Frontend' / page
         if not route.with_suffix('.html').is_file() and not (route / 'index.html').is_file():
             raise ValueError(f'AVD frontend page is missing from the built portal: {page}')
-    portal_js = '\n'.join(p.read_text(encoding='utf-8') for p in javascript)
-    for endpoint in ('ListPiAvdHostPools', 'ListPiAvdSessionHosts', 'ListPiAvdUserSessions',
-                     'ExecPiAvdSessionHost', 'ExecPiAvdUserSession'):
+    for endpoint in CUSTOM_ENDPOINTS:
         if endpoint not in portal_js:
             raise ValueError(f'AVD frontend endpoint is missing from the built portal: {endpoint}')
 
@@ -222,7 +258,7 @@ if __name__ == "__main__":
                 for key, value in values.items():
                     output.write(f"{key}={value}\n")
     elif args.command == "prepare":
-        print(f"Preserved {prepare(args.source)} upstream standards; added {STANDARD}")
+        print(f"Preserved {prepare(args.source)} upstream standards; added {', '.join((STANDARD, *AVD_STANDARDS))}")
     else:
         smoke(args.app, args.version)
         print("Built backend export, portal and backend catalogs, runtime files and updater version verified")

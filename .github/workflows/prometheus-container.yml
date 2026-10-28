@@ -15,11 +15,13 @@ on:
       - 'prometheus/**'
       - '!prometheus/build-state.json'
       - '.github/workflows/prometheus-container.yml'
-      - 'backend/Modules/CIPPHTTP/Public/Custom/AVD/**'
-      - 'backend/Modules/CIPPHTTP/Public/Entrypoints/HTTP Functions/Custom/AVD/**'
-      - 'backend/Tests/Custom/PiAvd.Tests.ps1'
+      - 'backend/Modules/CIPPHTTP/Public/Custom/**'
+      - 'backend/Modules/CIPPHTTP/Public/Entrypoints/HTTP Functions/Custom/**'
+      - 'backend/Modules/CIPPStandards/Public/Custom/**'
+      - 'backend/Modules/CIPPStandards/Public/Standards/Custom/**'
+      - 'backend/Tests/Custom/**'
       - 'frontend/src/custom/**'
-      - 'frontend/src/pages/custom/avd/**'
+      - 'frontend/src/pages/custom/**'
       - 'frontend/tests/custom/**'
 
 permissions:
@@ -97,19 +99,20 @@ jobs:
           if ($Result.FailedCount -ne 0 -or $Result.PassedCount -lt 18) {
               throw 'Prometheus policy or version comparison tests failed.'
           }
-      - name: Test AVD tenant isolation and host action guards
+      - name: Test AVD, Lighthouse, Cloud PC and AVD standards guards
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           Import-Module Pester -MinimumVersion 5.7.1 -Force
-          $Result = Invoke-Pester -Path source/backend/Tests/Custom/PiAvd.Tests.ps1 -Output Detailed -PassThru
-          if ($Result.FailedCount -ne 0 -or $Result.PassedCount -ne 16) {
-              throw 'Prometheus AVD policy tests failed.'
+          # 16 AVD module + 17 Lighthouse/Cloud PC + 16 AVD standards tests.
+          $Result = Invoke-Pester -Path source/backend/Tests/Custom -Output Detailed -PassThru
+          if ($Result.FailedCount -ne 0 -or $Result.PassedCount -ne 49) {
+              throw 'Prometheus Azure fork tests failed.'
           }
       - uses: actions/setup-node@v4
         with:
           node-version: '22.x'
-      - name: Test AVD portal navigation, page imports and actions
+      - name: Test fork portal navigation, page imports and actions
         working-directory: source/frontend
         run: |
           corepack enable

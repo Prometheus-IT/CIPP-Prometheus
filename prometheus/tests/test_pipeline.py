@@ -2,6 +2,7 @@ import importlib.util
 import json
 from pathlib import Path
 import os
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -10,6 +11,7 @@ OVERLAY = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("pipeline", OVERLAY / "pipeline.py")
 pipeline = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pipeline)
+FULL_CATALOG = [{"name": f"standards.{n}"} for n in (pipeline.STANDARD, *pipeline.AVD_STANDARDS)]
 
 
 class PipelineTests(unittest.TestCase):
@@ -35,7 +37,7 @@ class PipelineTests(unittest.TestCase):
         original = json.loads((self.source / "frontend/src/data/standards.json").read_text())
         self.assertEqual(pipeline.prepare(self.source), 1)
         combined = json.loads((self.source / "frontend/src/data/standards.json").read_text())
-        self.assertEqual(combined[:-1], original)
+        self.assertEqual(combined[:len(original)], original)
         function = self.source / f"backend/Modules/CIPPStandards/Public/Standards/{pipeline.SOURCE_FILE}"
         self.assertEqual(function.read_bytes(), (OVERLAY / pipeline.SOURCE_FILE).read_bytes())
 
@@ -44,8 +46,9 @@ class PipelineTests(unittest.TestCase):
         original = json.loads(backend.read_text())
         pipeline.prepare(self.source)
         combined = json.loads(backend.read_text())
-        self.assertEqual(combined[:-1], original)
-        self.assertEqual(combined[-1]["name"], f"standards.{pipeline.STANDARD}")
+        self.assertEqual(combined[:len(original)], original)
+        self.assertEqual(sorted(i["name"] for i in combined[len(original):]),
+                         sorted(f"standards.{n}" for n in (pipeline.STANDARD, *pipeline.AVD_STANDARDS)))
 
     def test_repeat_application_stops_without_overwriting(self):
         pipeline.prepare(self.source)
@@ -107,7 +110,8 @@ class PipelineTests(unittest.TestCase):
             "API/Modules/CIPPHTTP/CIPPHTTP.psm1": "function Invoke-ListDefenderDashboard {}",
             "API/Modules/CIPPHTTP/CIPPHTTP.psd1": "@{ FunctionsToExport = '*' }",
             "Frontend/version.json": json.dumps({"version": "test", "tag": "latest"}),
-            "Frontend/_next/static/app.js": f"standards.{pipeline.STANDARD}",
+            "Frontend/_next/static/app.js": " ".join(
+                f"standards.{n}" for n in (pipeline.STANDARD, *pipeline.AVD_STANDARDS)),
             "Frontend/index.html": "",
         }
         for name, text in files.items():
@@ -116,19 +120,18 @@ class PipelineTests(unittest.TestCase):
             target.write_text(text)
         for name in ("API/Modules/CIPPCore", "API/Modules/CIPPHTTP"):
             (app / name).mkdir(parents=True, exist_ok=True)
-        http = app / "API/Modules/CIPPHTTP/CIPPHTTP.psm1"
         for path in pipeline.avd_overlay_files():
             if path.suffix == '.ps1' and 'Modules' in path.parts:
-                with http.open('a') as output:
+                module = path.parts[path.parts.index('Modules') + 1]
+                with (app / f"API/Modules/{module}/{module}.psm1").open('a') as output:
                     output.write(f'\nfunction {path.stem} {{}}')
         portal = app / 'Frontend/_next/static/app.js'
         with portal.open('a') as output:
-            output.write(' ListPiAvdHostPools ListPiAvdSessionHosts ListPiAvdUserSessions'
-                         ' ExecPiAvdSessionHost ExecPiAvdUserSession')
-        for page in pipeline.AVD_PAGES:
-            route = app / f'Frontend/custom/avd/{page}/index.html'
+            output.write(' ' + ' '.join(pipeline.CUSTOM_ENDPOINTS))
+        for page in pipeline.CUSTOM_PAGES:
+            route = app / f'Frontend/{page}/index.html'
             route.parent.mkdir(parents=True, exist_ok=True)
-            route.write_text('AVD page')
+            route.write_text('custom page')
         return app
 
     def test_prepare_copies_avd_sources_tests_and_appends_menu_hook(self):
@@ -175,31 +178,50 @@ class PipelineTests(unittest.TestCase):
             self.assertNotEqual(pipeline.overlay_hash(), first)
 
     def test_smoke_rejects_missing_avd_function(self):
-        app = self.write_packaged_app([{'name': f'standards.{pipeline.STANDARD}'}])
+        app = self.write_packaged_app(FULL_CATALOG)
         module = app / 'API/Modules/CIPPHTTP/CIPPHTTP.psm1'
         module.write_text(module.read_text().replace('function Get-PiArmToken {}', ''))
         with self.assertRaisesRegex(ValueError, 'AVD function is missing'):
             pipeline.smoke(app, 'test')
 
     def test_smoke_rejects_missing_avd_page(self):
-        app = self.write_packaged_app([{'name': f'standards.{pipeline.STANDARD}'}])
+        app = self.write_packaged_app(FULL_CATALOG)
         (app / 'Frontend/custom/avd/sessions/index.html').unlink()
         with self.assertRaisesRegex(ValueError, 'AVD frontend page is missing'):
             pipeline.smoke(app, 'test')
 
     def test_smoke_rejects_missing_avd_portal_action(self):
-        app = self.write_packaged_app([{'name': f'standards.{pipeline.STANDARD}'}])
+        app = self.write_packaged_app(FULL_CATALOG)
         portal = app / 'Frontend/_next/static/app.js'
         portal.write_text(portal.read_text().replace('ExecPiAvdUserSession', ''))
         with self.assertRaisesRegex(ValueError, 'AVD frontend endpoint is missing'):
             pipeline.smoke(app, 'test')
 
-    def test_smoke_accepts_complete_container(self):
+    def test_smoke_rejects_avd_standard_missing_from_its_module(self):
+        app = self.write_packaged_app(FULL_CATALOG)
+        module = app / 'API/Modules/CIPPStandards/CIPPStandards.psm1'
+        module.write_text(module.read_text().replace('function Invoke-CIPPStandardPiAvdRdpProperties {}', ''))
+        with self.assertRaisesRegex(ValueError, 'AVD function is missing'):
+            pipeline.smoke(app, 'test')
+
+    def test_smoke_rejects_missing_lighthouse_and_cloud_pc_pages(self):
+        for page in ('custom/azure/lighthouse', 'custom/w365/cloud-pcs'):
+            app = self.write_packaged_app(FULL_CATALOG)
+            (app / f'Frontend/{page}/index.html').unlink()
+            with self.assertRaisesRegex(ValueError, 'frontend page is missing'):
+                pipeline.smoke(app, 'test')
+
+    def test_smoke_rejects_missing_fork_standard_in_backend_catalog(self):
         app = self.write_packaged_app([{"name": f"standards.{pipeline.STANDARD}"}])
+        with self.assertRaisesRegex(ValueError, "backend standards catalog: PiAvd"):
+            pipeline.smoke(app, "test")
+
+    def test_smoke_accepts_complete_container(self):
+        app = self.write_packaged_app(FULL_CATALOG)
         pipeline.smoke(app, "test")
 
     def test_smoke_rejects_missing_dashboard_endpoint(self):
-        app = self.write_packaged_app([{"name": f"standards.{pipeline.STANDARD}"}])
+        app = self.write_packaged_app(FULL_CATALOG)
         (app / 'API/Modules/CIPPHTTP/CIPPHTTP.psm1').write_text('function Other {}')
         with self.assertRaisesRegex(ValueError, 'dashboard endpoint'):
             pipeline.smoke(app, 'test')
@@ -208,6 +230,44 @@ class PipelineTests(unittest.TestCase):
         app = self.write_packaged_app([{"name": "standards.Existing"}])
         with self.assertRaisesRegex(ValueError, "backend standards catalog"):
             pipeline.smoke(app, "test")
+
+    def test_lighthouse_roles_match_bicep_template(self):
+        bicep = (pipeline.ROOT.parent / 'fork/lighthouse/cipp-avd-lighthouse.bicep').read_text()
+        helper = (pipeline.ROOT.parent / 'backend/Modules/CIPPHTTP/Public/Custom/Azure/Get-PiLighthouseRoles.ps1').read_text()
+        guid = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+        self.assertEqual(re.findall(rf"id: '({guid})'", bicep), re.findall(rf"Id\s+=\s+'({guid})'", helper))
+        self.assertEqual(len(re.findall(rf"id: '({guid})'", bicep)), 3)
+
+    def test_standard_api_versions_match_avd_module(self):
+        root = pipeline.ROOT.parent / 'backend/Modules'
+        avd = (root / 'CIPPHTTP/Public/Custom/AVD/Get-PiAvdApiVersion.ps1').read_text()
+        std = (root / 'CIPPStandards/Public/Custom/AVD/Get-PiAvdStandardApiVersion.ps1').read_text()
+        pattern = r"DesktopVirtualization\s*=\s*'([^']+)'"
+        self.assertEqual(re.search(pattern, avd).group(1), re.search(pattern, std).group(1))
+
+    def test_avd_standard_catalog_matches_comment_blocks(self):
+        catalog = {i["name"]: i for i in json.loads((pipeline.ROOT / "standards.json").read_text())}
+        files = {p.stem: p.read_text() for p in pipeline.avd_overlay_files() if p.suffix == '.ps1'}
+        for name in pipeline.AVD_STANDARDS:
+            item = catalog[f"standards.{name}"]
+            text = files[f"Invoke-CIPPStandard{name}"]
+            self.assertIn(f"(APIName) {name}", text)
+            self.assertIn(f"(Label) {item['label']}", text)
+            self.assertIn(f"(Helptext) {item['helpText']}", text)
+            self.assertIn(f"(DocsDescription) {item['docsDescription']}", text)
+            self.assertIn(item["cat"], text)
+            for component in item["addedComponent"]:
+                self.assertTrue(component["name"].startswith(f"standards.{name}."))
+                self.assertIn(json.dumps(component, separators=(",", ":")), text)
+            disabled = re.search(r"DISABLEDFEATURES\s+(\{.*\})", text)
+            self.assertEqual(json.loads(disabled.group(1)) if disabled else None, item.get("disabledFeatures"))
+
+    def test_catalog_entry_without_implementation_stops_before_source_mutation(self):
+        files = [p for p in pipeline.avd_overlay_files() if p.stem != 'Invoke-CIPPStandardPiAvdRdpProperties']
+        with patch.object(pipeline, 'avd_overlay_files', return_value=files):
+            with self.assertRaisesRegex(ValueError, 'no implementation'):
+                pipeline.prepare(self.source)
+        self.assertFalse((self.source / f"backend/Modules/CIPPStandards/Public/Standards/{pipeline.SOURCE_FILE}").exists())
 
     def resolve_recorded_build(self, recorded_sha="a" * 40, force=False, recorded_version=None):
         (self.source / "build-state.json").write_text(json.dumps({
