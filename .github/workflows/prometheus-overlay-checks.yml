@@ -1,0 +1,47 @@
+name: Prometheus overlay checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'prometheus/**'
+      - '.github/workflows/prometheus-overlay-checks.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: custom
+          persist-credentials: false
+      - name: Read recorded stable upstream revision
+        id: upstream
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          sha = json.loads(Path('custom/prometheus/build-state.json').read_text())['upstream_sha']
+          if not re.fullmatch(r'[a-f0-9]{40}', sha):
+              raise ValueError('Invalid recorded stable upstream revision')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'sha={sha}\n')
+          PY
+      - uses: actions/checkout@v4
+        with:
+          repository: CyberDrain/CIPP
+          ref: ${{ steps.upstream.outputs.sha }}
+          path: source
+          persist-credentials: false
+      - name: Test overlay behavior
+        run: python3 -m unittest discover -s custom/prometheus/tests -p 'test_*.py' -v
+      - name: Verify ESP fields against both released catalogs
+        run: |
+          for catalog in source/frontend/src/data/standards.json source/backend/Config/standards.json; do
+            CIPP_CATALOG_PATH="$GITHUB_WORKSPACE/$catalog" python3 -m unittest discover -s custom/prometheus/tests -p 'test_esp_editor_catalog.py' -v
+          done
+      - name: Prepare the recorded stable release without publication
+        run: python3 custom/prometheus/pipeline.py prepare source

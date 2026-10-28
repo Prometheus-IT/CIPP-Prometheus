@@ -142,6 +142,25 @@ def prepare(source):
     return len(catalogs[0][0])
 
 
+def normalize_esp_components(catalog):
+    """Keep ESP editor fields relative to the standard, as the form expects.
+
+    The legacy ESP catalog already prefixes its field names with
+    standards.AutopilotStatusPage. The editor adds that prefix itself, so
+    leaving both puts the settings in an unused nested standards object.
+    """
+    normalized = json.loads(json.dumps(catalog))
+    prefix = "standards.AutopilotStatusPage."
+    for item in normalized:
+        if item.get("name") != "standards.AutopilotStatusPage":
+            continue
+        for component in item.get("addedComponent", []):
+            name = component.get("name")
+            if isinstance(name, str) and name.startswith(prefix):
+                component["name"] = name[len(prefix):]
+    return normalized
+
+
 def merged_catalog(path, additions):
     catalog = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(catalog, list):
@@ -149,9 +168,12 @@ def merged_catalog(path, additions):
     names = [i["name"] for i in catalog]
     if len(names) != len(set(names)) or additions[0]["name"] in names:
         raise ValueError("Duplicate standard identifier; stop rather than overwrite")
-    encoded = json.dumps(catalog + additions, indent=2, ensure_ascii=False) + "\n"
-    if json.loads(encoded)[:-1] != catalog:
-        raise ValueError("Existing upstream standards were modified")
+    # Normalize only the legacy ESP editor field paths; policy settings and all
+    # other upstream standards are preserved. Apply to both maintained catalogs.
+    normalized_catalog = normalize_esp_components(catalog)
+    encoded = json.dumps(normalized_catalog + additions, indent=2, ensure_ascii=False) + "\n"
+    if json.loads(encoded)[:-1] != normalized_catalog:
+        raise ValueError("Unexpected catalog changes after ESP field normalization")
     return catalog, encoded
 
 
@@ -226,3 +248,4 @@ if __name__ == "__main__":
     else:
         smoke(args.app, args.version)
         print("Built backend export, portal and backend catalogs, runtime files and updater version verified")
+
