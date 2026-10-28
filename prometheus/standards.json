@@ -15,8 +15,14 @@
         "name": "standards.PrometheusTeamsExternalChatFiles.state",
         "label": "External chat file sharing",
         "options": [
-          { "label": "Enabled", "value": "Enabled" },
-          { "label": "Disabled", "value": "Disabled" }
+          {
+            "label": "Enabled",
+            "value": "Enabled"
+          },
+          {
+            "label": "Disabled",
+            "value": "Disabled"
+          }
         ]
       }
     ],
@@ -24,7 +30,129 @@
     "impactColour": "warning",
     "addedDate": "2026-10-06",
     "powershellEquivalent": "Set-CsTeamsFilesPolicy -Identity Global -FileSharingInChatsWithExternalUsers Enabled",
-    "recommendedBy": ["Prometheus"],
-    "requiredCapabilities": ["MCOSTANDARD", "MCOEV", "MCOIMP", "TEAMS1", "Teams_Room_Standard"]
+    "recommendedBy": [
+      "Prometheus"
+    ],
+    "requiredCapabilities": [
+      "MCOSTANDARD",
+      "MCOEV",
+      "MCOIMP",
+      "TEAMS1",
+      "Teams_Room_Standard"
+    ]
+  },
+  {
+    "name": "standards.PiAvdScalingPowerManage",
+    "cat": "Azure Virtual Desktop Standards",
+    "tag": [],
+    "addedDate": "2026-10-28",
+    "recommendedBy": [
+      "Prometheus"
+    ],
+    "label": "AVD scaling plans only power-manage hosts (Prometheus)",
+    "helpText": "Flags AVD scaling plans that use dynamic autoscale (CreateDeletePowerManage), which lets Azure create and delete session hosts. Optionally requires an enabled scaling plan on every pooled host pool. Report and alert only.",
+    "docsDescription": "Reads scaling plans and host pools through Azure Resource Graph (Azure Lighthouse or tenant RBAC, as configured for the CIPP AVD module). A schedule whose scalingMethod is CreateDeletePowerManage is non-compliant; schedules without a scalingMethod are power management only. Tenants whose subscriptions are not visible to CIPP are reported as non-compliant rather than compliant. This standard never changes Azure resources.",
+    "executiveText": "Makes sure automatic scaling of the virtual desktop environment only switches existing machines on and off, and never creates or deletes them without review.",
+    "addedComponent": [
+      {
+        "type": "switch",
+        "name": "standards.PiAvdScalingPowerManage.requireScalingPlan",
+        "label": "Also require an enabled scaling plan on every pooled host pool",
+        "defaultValue": false
+      }
+    ],
+    "disabledFeatures": {
+      "remediate": true
+    },
+    "impact": "Low Impact",
+    "impactColour": "info",
+    "powershellEquivalent": "Get-AzWvdScalingPlan"
+  },
+  {
+    "name": "standards.PiAvdStartVMOnConnect",
+    "cat": "Azure Virtual Desktop Standards",
+    "tag": [],
+    "addedDate": "2026-10-28",
+    "recommendedBy": [
+      "Prometheus"
+    ],
+    "label": "AVD Start VM on Connect is enabled (Prometheus)",
+    "helpText": "Requires Start VM on Connect on every AVD host pool, and optionally checks that the Azure Virtual Desktop service has a power-on role on the subscriptions holding them. Remediate enables the host pool setting only; role assignments must be made by a customer administrator.",
+    "docsDescription": "Reads host pools through Azure Resource Graph. Remediate sends a PATCH with only properties.startVMOnConnect = true and reads the host pool back before reporting success; this needs hostpools/write, which the AVD module's Desktop Virtualization Power On Off Contributor delegation includes. The optional role check looks for a direct assignment of Desktop Virtualization Power On Contributor, Power On Off Contributor, Virtual Machine Contributor, Contributor or Owner to the Azure Virtual Desktop service principal (9cdead84-a844-4324-93f2-b2e6bb768d07). Without it, Start VM on Connect is enabled but cannot start VMs. Role lookups that fail are reported as non-compliant.",
+    "executiveText": "Lets switched-off virtual desktops start automatically when a user connects, so the environment can save compute costs without locking users out.",
+    "addedComponent": [
+      {
+        "type": "switch",
+        "name": "standards.PiAvdStartVMOnConnect.checkPowerOnRole",
+        "label": "Also require a power-on role for the Azure Virtual Desktop service",
+        "defaultValue": true
+      }
+    ],
+    "impact": "Low Impact",
+    "impactColour": "info",
+    "powershellEquivalent": "Update-AzWvdHostPool -StartVMOnConnect:$true"
+  },
+  {
+    "name": "standards.PiAvdFslogixStorage",
+    "cat": "Azure Virtual Desktop Standards",
+    "tag": [],
+    "addedDate": "2026-10-28",
+    "recommendedBy": [
+      "Prometheus"
+    ],
+    "label": "AVD FSLogix storage accounts are hardened (Prometheus)",
+    "helpText": "Checks the storage accounts holding FSLogix profiles: secure transfer required, minimum TLS 1.2, no anonymous blob access and, optionally, an approved private endpoint with public network access closed. Report and alert only.",
+    "docsDescription": "Reads storage accounts through Azure Resource Graph. Without a name list, the standard checks storage accounts in subscriptions that contain AVD host pools and that have identity-based Azure Files authentication (AD DS, Entra Kerberos or Entra Domain Services) or 'fslogix' in their name or tags. A tenant with pooled host pools but no detectable FSLogix storage is non-compliant until the account names are entered. The private endpoint check requires at least one approved private endpoint connection and either public network access disabled or a default-deny network rule. This standard never changes Azure resources.",
+    "executiveText": "Keeps the storage that holds users' virtual desktop profiles reachable only over encrypted, private connections.",
+    "addedComponent": [
+      {
+        "type": "textField",
+        "name": "standards.PiAvdFslogixStorage.storageAccounts",
+        "label": "Storage account names, comma separated (empty: detect FSLogix accounts)",
+        "required": false
+      },
+      {
+        "type": "switch",
+        "name": "standards.PiAvdFslogixStorage.requirePrivateEndpoint",
+        "label": "Require an approved private endpoint and closed public access",
+        "defaultValue": true
+      }
+    ],
+    "disabledFeatures": {
+      "remediate": true
+    },
+    "impact": "Low Impact",
+    "impactColour": "info",
+    "powershellEquivalent": "Get-AzStorageAccount"
+  },
+  {
+    "name": "standards.PiAvdRdpProperties",
+    "cat": "Azure Virtual Desktop Standards",
+    "tag": [],
+    "addedDate": "2026-10-28",
+    "recommendedBy": [
+      "Prometheus"
+    ],
+    "label": "AVD host pool RDP properties baseline (Prometheus)",
+    "helpText": "Requires the listed RDP properties on AVD host pools, for example drive, clipboard or audio redirection. Remediate sets only the listed properties and keeps every other custom RDP property.",
+    "docsDescription": "Compares each host pool's customRdpProperty with the required name:type:value entries, separated by semicolons (for example drivestoredirect:s:;redirectclipboard:i:1;audiocapturemode:i:1). A property with the same name and type but another value is replaced; properties that are not listed are kept. Remediate sends a PATCH with only properties.customRdpProperty and reads the host pool back before reporting success; this needs hostpools/write, which the AVD module's Desktop Virtualization Power On Off Contributor delegation includes. New connections pick up the change; existing sessions keep their settings.",
+    "executiveText": "Applies the same, agreed device redirection rules (drives, clipboard, audio) to every virtual desktop pool, so data handling is consistent across customers.",
+    "addedComponent": [
+      {
+        "type": "textField",
+        "name": "standards.PiAvdRdpProperties.rdpProperties",
+        "label": "Required RDP properties (name:type:value, separated by ;)",
+        "required": true
+      },
+      {
+        "type": "textField",
+        "name": "standards.PiAvdRdpProperties.hostPools",
+        "label": "Host pool names, comma separated (empty: every host pool)",
+        "required": false
+      }
+    ],
+    "impact": "Medium Impact",
+    "impactColour": "warning",
+    "powershellEquivalent": "Update-AzWvdHostPool -CustomRdpProperty"
   }
 ]

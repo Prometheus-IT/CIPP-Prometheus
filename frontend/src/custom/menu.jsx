@@ -16,7 +16,7 @@ export const customMenuItems = [
         <CippIcons.Cloud />
       </SvgIcon>
     ),
-    permissions: ['Endpoint.AVD.*'],
+    permissions: ['Endpoint.AVD.*', 'Endpoint.CloudPC.*'],
     // Insert after this upstream top-level item; falls back to before 'Tools', then the end.
     insertAfter: 'Intune',
     items: [
@@ -37,6 +37,28 @@ export const customMenuItems = [
           {
             title: 'User Sessions',
             path: '/custom/avd/sessions',
+            permissions: ['Endpoint.AVD.*'],
+          },
+        ],
+      },
+      {
+        title: 'Windows 365',
+        permissions: ['Endpoint.CloudPC.*'],
+        items: [
+          {
+            title: 'Cloud PCs',
+            path: '/custom/w365/cloud-pcs',
+            permissions: ['Endpoint.CloudPC.*'],
+          },
+        ],
+      },
+      {
+        title: 'Azure Lighthouse',
+        permissions: ['Endpoint.AVD.*'],
+        items: [
+          {
+            title: 'Onboarding',
+            path: '/custom/azure/lighthouse',
             permissions: ['Endpoint.AVD.*'],
           },
         ],
