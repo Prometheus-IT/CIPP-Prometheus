@@ -1,0 +1,157 @@
+name: Prometheus PR validation
+
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+
+# PR code runs on disposable hosted runners with no production credentials.
+permissions:
+  contents: read
+
+concurrency:
+  group: prometheus-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Resolve official stable release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      upstream_sha: ${{ steps.release.outputs.upstream_sha }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Resolve the publisher's exact stable source
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Always validate, even when build-state.json already records this version.
+        run: |
+          python3 -m unittest discover -s .github/scripts/tests -v
+          python3 prometheus/pipeline.py resolve --force
+
+  stable-build:
+    name: Stable release build and image security
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      UPSTREAM_SHA: ${{ needs.plan.outputs.upstream_sha }}
+      IMAGE: prometheus-cipp-pr:candidate
+    steps:
+      # Default checkout is the PR merge commit (or merge-group commit).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: custom
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: CyberDrain/CIPP
+          ref: ${{ needs.plan.outputs.upstream_sha }}
+          path: source
+          persist-credentials: false
+      - name: Test and apply the production overlay
+        run: |
+          python3 -m unittest discover -s custom/prometheus/tests -p 'test_*.py' -v
+          python3 custom/prometheus/pipeline.py prepare source
+          test "$(git -C source rev-parse HEAD)" = "$UPSTREAM_SHA"
+          {
+            echo '### Stable source under test'
+            echo "Upstream commit: $UPSTREAM_SHA"
+            echo "Application version: $VERSION"
+            echo "PR merge commit: $GITHUB_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Compute build metadata
+        id: metadata
+        run: echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build the release container without publishing
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: source
+          file: source/build/Dockerfile.release
+          load: true
+          push: false
+          platforms: linux/amd64
+          tags: ${{ env.IMAGE }}
+          # Read the publisher cache; never write a PR cache into its namespace.
+          cache-from: type=gha,scope=prometheus-stable
+          build-args: |
+            APP_VERSION=${{ env.VERSION }}
+            COMMIT_SHA=${{ env.UPSTREAM_SHA }}
+            IMAGE_TAG=latest
+            BUILD_DATE=${{ steps.metadata.outputs.date }}
+            DOTNET_REGISTRY=ghcr.io/cyberdrain
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+            ch.prometheus.cipp.upstream-revision=${{ env.UPSTREAM_SHA }}
+      - name: Verify the packaged overlay and version
+        run: |
+          container=$(docker create "$IMAGE")
+          trap 'docker rm "$container" >/dev/null' EXIT
+          mkdir -p packaged/app/API/Modules
+          for module in CIPPStandards CIPPCore CIPPHTTP; do
+            docker cp "$container:/app/API/Modules/$module" packaged/app/API/Modules/
+          done
+          docker cp "$container:/app/API/Config" packaged/app/API/Config
+          docker cp "$container:/app/Frontend" packaged/app/Frontend
+          python3 custom/prometheus/pipeline.py smoke packaged/app "$VERSION"
+          actual=$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')
+          test "$actual" = "$VERSION"
+      - name: Scan the final image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          scanners: vuln
+          format: json
+          output: trivy-image.json
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '0'
+          trivyignores: ''
+          cache: 'false'
+      - name: Block fixable high and critical image vulnerabilities
+        run: python3 custom/.github/scripts/check_image_vulnerabilities.py trivy-image.json
+      - name: Retain the image vulnerability report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: prometheus-pr-image-security
+          path: trivy-image.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  secrets:
+    name: PR secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan every proposed commit with redacted output
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Use built-in rules rather than a PR-provided allowlist/configuration.
+          GITLEAKS_CONFIG_TOML: |
+            [extend]
+            useDefault = true
+        run: |
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ && "$HEAD_SHA" =~ ^[a-f0-9]{40}$ ]]
+          git cat-file -e "$BASE_SHA^{commit}"
+          git cat-file -e "$HEAD_SHA^{commit}"
+          docker run --rm --network=none \
+            --volume "$GITHUB_WORKSPACE:/repo:ro" --workdir /repo \
+            --env GITLEAKS_CONFIG_TOML \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git /repo --log-opts="$BASE_SHA..$HEAD_SHA" \
+            --redact=100 --ignore-gitleaks-allow --no-banner
