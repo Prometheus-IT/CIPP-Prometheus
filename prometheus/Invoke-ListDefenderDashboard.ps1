@@ -94,12 +94,23 @@ function Invoke-ListDefenderDashboard {
             $Incidents.data = @($Incidents.data | Select-Object id, displayName, severity, status, assignedTo, createdDateTime, lastUpdateDateTime)
         }
         # Same read contract already used by CIPP's ListDefenderState. Keep the
-        # projection minimal: no user details, recovery keys or action results.
-        $Managed = Read-DashboardSource -Uri 'https://graph.microsoft.com/beta/deviceManagement/managedDevices?$expand=windowsProtectionState&$select=id,azureADDeviceId,operatingSystem,windowsProtectionState,deviceHealthAttestationState' -Scope 'https://graph.microsoft.com/.default'
+        # projection minimal: approved inventory and security evidence only; no user
+        # details, recovery keys, action results or new SAM/GDAP grants.
+        $Managed = Read-DashboardSource -Uri 'https://graph.microsoft.com/beta/deviceManagement/managedDevices?$expand=windowsProtectionState&$select=id,azureADDeviceId,deviceName,operatingSystem,osVersion,enrolledDateTime,lastSyncDateTime,managementAgent,complianceState,totalStorageSpaceInBytes,freeStorageSpaceInBytes,windowsProtectionState,deviceHealthAttestationState' -Scope 'https://graph.microsoft.com/.default'
         if ($Managed.status -eq 'ok') {
             $Managed.data = @($Managed.data | Where-Object { $_.operatingSystem -eq 'Windows' } | ForEach-Object {
                 @{
+                    id = $_.id
                     azureADDeviceId = $_.azureADDeviceId
+                    deviceName = $_.deviceName
+                    operatingSystem = $_.operatingSystem
+                    osVersion = $_.osVersion
+                    enrolledDateTime = $_.enrolledDateTime
+                    lastSyncDateTime = $_.lastSyncDateTime
+                    managementAgent = $_.managementAgent
+                    complianceState = $_.complianceState
+                    totalStorageSpaceInBytes = $_.totalStorageSpaceInBytes
+                    freeStorageSpaceInBytes = $_.freeStorageSpaceInBytes
                     protection = $(if ($_.windowsProtectionState) { $_.windowsProtectionState | Select-Object realTimeProtectionEnabled, tamperProtectionEnabled, lastReportedDateTime } else { $null })
                     attestation = $(if ($_.deviceHealthAttestationState) { $_.deviceHealthAttestationState | Select-Object bitLockerStatus, issuedDateTime } else { $null })
                 }
