@@ -45,6 +45,16 @@ AVD_MENU = "frontend/src/layouts/config.jsx"
 AVD_HOOK = ('\n// Prometheus Azure Virtual Desktop navigation.\n'
             'import { applyCustomMenuItems } from "../custom/menu";\n'
             'applyCustomMenuItems(nativeMenuItems);\n')
+MCP_SCOPE_SETTINGS = 'backend/Modules/CIPPCore/Public/MCP/Get-CippMcpScopeAppSettings.ps1'
+
+
+def mcp_account_picker(text):
+    """Keep delegated MCP sign-in from silently reusing the wrong Microsoft account."""
+    pattern = r'(?m)^(\s*authorization_endpoint\s*=\s*"\$TenantedLogin/oauth2/v2\.0/authorize)("[^\n]*)$'
+    updated, count = re.subn(pattern, r'\1?prompt=select_account\2', text)
+    if count != 1:
+        raise ValueError('MCP authorization endpoint contract changed; review account selection')
+    return updated
 
 
 def avd_overlay_files():
@@ -154,6 +164,8 @@ def prepare(source):
     menu = menu_path.read_text(encoding="utf-8")
     if not re.search(r"export\s+const\s+nativeMenuItems\s*=", menu) or "applyCustomMenuItems" in menu:
         raise ValueError("AVD navigation contract changed; review before updating")
+    mcp_path = source / MCP_SCOPE_SETTINGS
+    mcp_settings = mcp_account_picker(mcp_path.read_text(encoding='utf-8'))
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / SOURCE_FILE, destination)
     dashboard = source / 'backend/Modules/CIPPHTTP/Public/Entrypoints/HTTP Functions/Security/Defender/Invoke-ListDefenderDashboard.ps1'
@@ -166,6 +178,7 @@ def prepare(source):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target)
     menu_path.write_text(menu.rstrip() + "\n" + AVD_HOOK, encoding="utf-8")
+    mcp_path.write_text(mcp_settings, encoding='utf-8')
     for path, (_, encoded) in zip(CATALOGS, catalogs):
         (source / path).write_text(encoded, encoding="utf-8")
     return len(catalogs[0][0])
@@ -238,6 +251,9 @@ def smoke(app, version):
     for endpoint in CUSTOM_ENDPOINTS:
         if endpoint not in portal_js:
             raise ValueError(f'AVD frontend endpoint is missing from the built portal: {endpoint}')
+    core = next((app / 'API/Modules/CIPPCore').rglob('CIPPCore.psm1')).read_text(encoding='utf-8-sig')
+    if not re.search(r'function\s+Get-CippMcpScopeAppSettings\b.*?authorization_endpoint\s*=\s*"\$TenantedLogin/oauth2/v2\.0/authorize\?prompt=select_account"', core, re.S | re.I):
+        raise ValueError('MCP account selection is missing from the runtime module')
 
 
 if __name__ == "__main__":
