@@ -46,9 +46,13 @@ They may read the production build cache but do not write to it.
 After these workflows have run, configure the `main` protection rule/ruleset to
 require the following checks before merging:
 
-1. `Stable release build and image security`
-2. `PR secret scan`
-3. `dependency-review` (the job in `Dependency Review`)
+1. `Prometheus pre-merge gate` (requires release resolution, the stable build/image
+   scan and the secret scan to succeed; skipped prerequisite jobs cannot pass it)
+2. `dependency-review` (the job in `Dependency Review`)
 
 Workflow files alone do not enforce merge protection. Preserve other existing
 required checks. The production publisher remains separate and unchanged.
+It currently writes `prometheus/build-state.json` directly to `main`; before
+enforcing checks on direct pushes, provide a reviewed automation bypass or move
+that state update to a compatible mechanism. Do not inadvertently block the
+publisher's successful-build record.
