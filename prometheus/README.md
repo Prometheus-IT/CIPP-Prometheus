@@ -32,6 +32,12 @@ GitHub's **Sync fork** button.
 
 ## Standard and recovery
 
+The MCP discovery overlay adds `prompt=select_account` to Microsoft's authorization
+endpoint. Delegated MCP sign-in must let the user choose their CIPP account instead of
+silently reusing another Microsoft session. Both Save to Azure and startup reconciliation
+use the patched scope-settings helper. Preparation guards the upstream contract, behavior
+tests preserve scopes and PKCE, and the packaged-module check verifies the picker is shipped.
+
 The standard controls only `FileSharingInChatsWithExternalUsers` on the assigned tenant's
 Global Teams Files policy. Report reads only; Remediate applies the explicit Enabled or
 Disabled choice and verifies the result. SharePoint and OneDrive restrictions still apply.
