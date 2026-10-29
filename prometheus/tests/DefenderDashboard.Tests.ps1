@@ -43,6 +43,35 @@ Describe 'Read-only Defender dashboard boundary' {
         ($r.Body | ConvertTo-Json -Depth 15) | Should -Not -Match 'must-not-leak|private@example|recoveryKey|emailAddress'
         $r.Body.managedDevices.data[0].protection.tamperProtectionEnabled | Should -BeFalse
     }
+    It 'adds only the approved inventory fields to the existing Graph GET' {
+        Mock Invoke-RestMethod {
+            if ($Uri -like '*managedDevices*') {
+                @{ value = @(
+                    @{ id='managed';azureADDeviceId='entra';deviceName='TEST-PC';operatingSystem='Windows';osVersion='10.0.26100.1';enrolledDateTime='2026-10-28T10:00:00Z';lastSyncDateTime='2026-10-29T10:00:00Z';managementAgent='mdm';complianceState='noncompliant';totalStorageSpaceInBytes=274877906944;freeStorageSpaceInBytes=0;userPrincipalName='must-not-leak';deviceActionResults=@('must-not-leak') },
+                    @{ id='other-platform';operatingSystem='iOS' }
+                ) }
+            } else { @{ value=@() } }
+        }
+        $r=Invoke-ListDefenderDashboard -Request @{Method='GET';Query=@{Workload='security';TenantFilter=$script:customer}}
+        $rows=@($r.Body.managedDevices.data)
+        $rows.Count | Should -Be 1
+        $rows[0].id | Should -Be 'managed'
+        $rows[0].deviceName | Should -Be 'TEST-PC'
+        $rows[0].lastSyncDateTime | Should -Be '2026-10-29T10:00:00Z'
+        $rows[0].complianceState | Should -Be 'noncompliant'
+        $rows[0].totalStorageSpaceInBytes | Should -Be 274877906944
+        $rows[0].freeStorageSpaceInBytes | Should -Be 0
+        ($rows[0].Keys | Sort-Object) -join ',' | Should -Be 'attestation,azureADDeviceId,complianceState,deviceName,enrolledDateTime,freeStorageSpaceInBytes,id,lastSyncDateTime,managementAgent,operatingSystem,osVersion,protection,totalStorageSpaceInBytes'
+        ($r.Body | ConvertTo-Json -Depth 15) | Should -Not -Match 'must-not-leak|deviceActionResults|userPrincipalName'
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $Uri -like '*managedDevices*' -and $Uri -like '*lastSyncDateTime*' -and $Uri -like '*freeStorageSpaceInBytes*' -and $Method -eq 'Get' }
+    }
+    It 'leaves missing inventory measurements null and does not manufacture a check-in' {
+        Mock Invoke-RestMethod { if($Uri -like '*managedDevices*'){@{value=@(@{azureADDeviceId='entra';operatingSystem='Windows'})}}else{@{value=@()}} }
+        $r=Invoke-ListDefenderDashboard -Request @{Method='GET';Query=@{Workload='security';TenantFilter=$script:customer}}
+        $r.Body.managedDevices.data[0].lastSyncDateTime | Should -BeNullOrEmpty
+        $r.Body.managedDevices.data[0].freeStorageSpaceInBytes | Should -BeNullOrEmpty
+        $r.Body.managedDevices.data[0].complianceState | Should -BeNullOrEmpty
+    }
     It 'blocks same-origin pagination to a different API path' {
         Mock Invoke-RestMethod { @{ value=@();'@odata.nextLink'='https://api.security.microsoft.com/api/other' } }
         $r = Invoke-ListDefenderDashboard -Request @{Method='GET';Query=@{Workload='security';TenantFilter=$script:customer}}
