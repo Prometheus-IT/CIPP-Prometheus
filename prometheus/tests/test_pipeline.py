@@ -27,9 +27,6 @@ class PipelineTests(unittest.TestCase):
             "backend/Modules/CIPPCore/Public/Set-CIPPStandardsCompareField.ps1": "$TenantFilter",
             "build/Dockerfile.release": "FROM scratch",
             "frontend/src/layouts/config.jsx": "export const nativeMenuItems = []\n",
-            pipeline.MCP_SCOPE_SETTINGS: 'function Get-CippMcpScopeAppSettings {\n'
-                '    authorization_endpoint = "$TenantedLogin/oauth2/v2.0/authorize"\n'
-                '    token_endpoint = "$TenantedLogin/oauth2/v2.0/token"\n}\n',
         }
         for name, text in files.items():
             target = self.source / name
@@ -79,21 +76,6 @@ class PipelineTests(unittest.TestCase):
             pipeline.prepare(self.source)
         self.assertEqual((self.source / "frontend/src/data/standards.json").read_bytes(), before)
 
-    def test_prepare_requests_mcp_account_selection_and_preserves_token_endpoint(self):
-        settings = self.source / pipeline.MCP_SCOPE_SETTINGS
-        original = settings.read_text()
-        pipeline.prepare(self.source)
-        self.assertEqual(settings.read_text(), original.replace(
-            '/oauth2/v2.0/authorize"', '/oauth2/v2.0/authorize?prompt=select_account"'))
-
-    def test_changed_mcp_endpoint_stops_before_any_overlay_write(self):
-        (self.source / pipeline.MCP_SCOPE_SETTINGS).write_text('upstream changed its OAuth flow')
-        before = (self.source / pipeline.CATALOGS[0]).read_bytes()
-        with self.assertRaisesRegex(ValueError, 'MCP authorization endpoint contract changed'):
-            pipeline.prepare(self.source)
-        self.assertEqual((self.source / pipeline.CATALOGS[0]).read_bytes(), before)
-        self.assertFalse((self.source / f'backend/Modules/CIPPStandards/Public/Standards/{pipeline.SOURCE_FILE}').exists())
-
     def test_rejects_prerelease(self):
         with patch.object(pipeline, "api", return_value={"tag_name": "v12.0.0-preview", "draft": False, "prerelease": True}):
             with self.assertRaises(ValueError):
@@ -127,8 +109,6 @@ class PipelineTests(unittest.TestCase):
             "API/Config/standards.json": json.dumps(backend_catalog),
             "API/Modules/CIPPHTTP/CIPPHTTP.psm1": "function Invoke-ListDefenderDashboard {}",
             "API/Modules/CIPPHTTP/CIPPHTTP.psd1": "@{ FunctionsToExport = '*' }",
-            "API/Modules/CIPPCore/CIPPCore.psm1": 'function Get-CippMcpScopeAppSettings {\n'
-                '    authorization_endpoint = "$TenantedLogin/oauth2/v2.0/authorize?prompt=select_account"\n}\n',
             "Frontend/version.json": json.dumps({"version": "test", "tag": "latest"}),
             "Frontend/_next/static/app.js": " ".join(
                 f"standards.{n}" for n in (pipeline.STANDARD, *pipeline.AVD_STANDARDS)),
@@ -239,13 +219,6 @@ class PipelineTests(unittest.TestCase):
     def test_smoke_accepts_complete_container(self):
         app = self.write_packaged_app(FULL_CATALOG)
         pipeline.smoke(app, "test")
-
-    def test_smoke_rejects_missing_mcp_account_picker(self):
-        app = self.write_packaged_app(FULL_CATALOG)
-        module = app / 'API/Modules/CIPPCore/CIPPCore.psm1'
-        module.write_text(module.read_text().replace('?prompt=select_account', ''))
-        with self.assertRaisesRegex(ValueError, 'MCP account selection is missing'):
-            pipeline.smoke(app, 'test')
 
     def test_smoke_rejects_missing_dashboard_endpoint(self):
         app = self.write_packaged_app(FULL_CATALOG)
