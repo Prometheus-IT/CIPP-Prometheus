@@ -16,10 +16,24 @@ export const customMenuItems = [
         <CippIcons.Cloud />
       </SvgIcon>
     ),
-    permissions: ['Endpoint.AVD.*', 'Endpoint.CloudPC.*'],
+    permissions: [
+      'Endpoint.AVD.*',
+      'Endpoint.CloudPC.*',
+      'Endpoint.AzureReports.*',
+    ],
     // Insert after this upstream top-level item; falls back to before 'Tools', then the end.
     insertAfter: 'Intune',
     items: [
+      {
+        title: 'Retirements',
+        path: '/custom/azure/retirements',
+        permissions: ['Endpoint.AzureReports.*'],
+      },
+      {
+        title: 'Change Tracker',
+        path: '/custom/azure/changes',
+        permissions: ['Endpoint.AzureReports.*'],
+      },
       {
         title: 'Azure Virtual Desktop',
         permissions: ['Endpoint.AVD.*'],

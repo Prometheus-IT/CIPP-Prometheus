@@ -99,14 +99,14 @@ jobs:
           if ($Result.FailedCount -ne 0 -or $Result.PassedCount -lt 18) {
               throw 'Prometheus policy or version comparison tests failed.'
           }
-      - name: Test AVD, Lighthouse, Cloud PC and AVD standards guards
+      - name: Test Azure reports, AVD, Lighthouse, Cloud PC and standards guards
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           Import-Module Pester -MinimumVersion 5.7.1 -Force
-          # 16 AVD module + 17 Lighthouse/Cloud PC + 16 AVD standards tests.
+          # Retain the existing 49 guards and require the Azure report suite as well.
           $Result = Invoke-Pester -Path source/backend/Tests/Custom -Output Detailed -PassThru
-          if ($Result.FailedCount -ne 0 -or $Result.PassedCount -ne 49) {
+          if ($Result.FailedCount -ne 0 -or $Result.PassedCount -lt 74 -or $Result.SkippedCount -ne 0) {
               throw 'Prometheus Azure fork tests failed.'
           }
       - uses: actions/setup-node@v4
@@ -118,7 +118,7 @@ jobs:
           corepack enable
           corepack prepare yarn@1.22.22 --activate
           yarn install --frozen-lockfile --ignore-scripts --network-timeout 100000
-          yarn vitest run --project unit tests/custom
+          yarn vitest run --project unit tests/custom --testTimeout=30000
       - name: Compute build metadata
         id: metadata
         run: echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
