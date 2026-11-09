@@ -32,11 +32,13 @@ AVD_ROOTS = (
 )
 # Static portal routes that must exist in the built frontend.
 CUSTOM_PAGES = ("custom/avd/host-pools", "custom/avd/session-hosts", "custom/avd/sessions",
-                "custom/azure/lighthouse", "custom/w365/cloud-pcs")
+                "custom/azure/lighthouse", "custom/w365/cloud-pcs",
+                "custom/azure/retirements", "custom/azure/changes")
 # API endpoints the built portal must call.
 CUSTOM_ENDPOINTS = ("ListPiAvdHostPools", "ListPiAvdSessionHosts", "ListPiAvdUserSessions",
                     "ExecPiAvdSessionHost", "ExecPiAvdUserSession", "ListPiAzureLighthouseStatus",
-                    "ListPiAzureLighthouseTemplate", "ListPiCloudPCs")
+                    "ListPiAzureLighthouseTemplate", "ListPiCloudPCs",
+                    "ListPiAzureRetirements", "ListPiAzureChanges")
 # Fork standards whose implementation lives in the AVD roots above (the Teams standard is
 # copied separately from prometheus/).
 AVD_STANDARDS = ("PiAvdScalingPowerManage", "PiAvdStartVMOnConnect", "PiAvdFslogixStorage",

@@ -8,6 +8,9 @@ const pages = {
     import('../../src/pages/custom/avd/session-hosts/index.jsx'),
   sessions: () => import('../../src/pages/custom/avd/sessions/index.jsx'),
   lighthouse: () => import('../../src/pages/custom/azure/lighthouse/index.jsx'),
+  retirements: () =>
+    import('../../src/pages/custom/azure/retirements/index.jsx'),
+  changes: () => import('../../src/pages/custom/azure/changes/index.jsx'),
   'cloud-pcs': () => import('../../src/pages/custom/w365/cloud-pcs/index.jsx'),
 }
 
@@ -41,12 +44,10 @@ describe('fork Azure pages', () => {
   })
 
   it('keep Lighthouse and Cloud PC actions read-only and inside CIPP or Intune', async () => {
-    const { getLighthouseStatusActions } = await import(
-      '../../src/custom/azure/lighthouse-actions.jsx'
-    )
-    const { getCloudPcActions } = await import(
-      '../../src/custom/w365/cloud-pc-actions.jsx'
-    )
+    const { getLighthouseStatusActions } =
+      await import('../../src/custom/azure/lighthouse-actions.jsx')
+    const { getCloudPcActions } =
+      await import('../../src/custom/w365/cloud-pc-actions.jsx')
     const all = [
       ...getLighthouseStatusActions(),
       ...getCloudPcActions('contoso.onmicrosoft.com'),
@@ -62,9 +63,8 @@ describe('fork Azure pages', () => {
   })
 
   it('hide the external Intune link in AllTenants, where it has no tenant to open', async () => {
-    const { getCloudPcActions } = await import(
-      '../../src/custom/w365/cloud-pc-actions.jsx'
-    )
+    const { getCloudPcActions } =
+      await import('../../src/custom/w365/cloud-pc-actions.jsx')
     const external = getCloudPcActions('AllTenants').find((a) => a.external)
     expect(external.condition({ ManagedDeviceId: 'x' })).toBe(false)
   })

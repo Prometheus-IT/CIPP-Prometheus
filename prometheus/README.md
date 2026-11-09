@@ -1,5 +1,8 @@
 # Prometheus CIPP overlay
 
+Azure retirement and resource change reports are documented in
+[`fork/AZURE-REPORTS.md`](../fork/AZURE-REPORTS.md), including access, coverage limits and acceptance checks.
+
 Production image: `ghcr.io/prometheus-it/cipp-container:latest`. The image keeps this name after the repository rename to `CIPP-Prometheus`, so Azure continues following the same update source.
 
 | File | Purpose |
