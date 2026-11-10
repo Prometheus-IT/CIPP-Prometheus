@@ -70,33 +70,37 @@ export const AzureReportPage = ({ kind }) => {
   )
   // A detail dialog must never retain a row from another tenant/window after navigation.
   const detail = selected?.queryKey === queryKey && data ? selected.row : null
+  // CippDataTable uses explicit IDs to select visible custom columns and to
+  // replace auto-generated columns; accessorKey alone is not sufficient.
   const columns = [
     ...(tenant === 'AllTenants'
-      ? [{ accessorKey: 'Tenant', header: 'Customer' }]
+      ? [{ id: 'Tenant', accessorKey: 'Tenant', header: 'Customer' }]
       : []),
-    { accessorKey: 'Subscription', header: 'Subscription' },
-    { accessorKey: 'Resource', header: 'Resource' },
+    { id: 'Subscription', accessorKey: 'Subscription', header: 'Subscription' },
+    { id: 'Resource', accessorKey: 'Resource', header: 'Resource' },
     ...(changes
       ? [
           {
+            id: 'ChangeTime',
             accessorKey: 'ChangeTime',
             header: 'Changed at',
             Cell: ({ cell }) => formatDate(cell.getValue()),
           },
-          { accessorKey: 'ChangeType', header: 'Change' },
-          { accessorKey: 'ChangedBy', header: 'Changed by' },
-          { accessorKey: 'Client', header: 'Client' },
+          { id: 'ChangeType', accessorKey: 'ChangeType', header: 'Change' },
+          { id: 'ChangedBy', accessorKey: 'ChangedBy', header: 'Changed by' },
+          { id: 'Client', accessorKey: 'Client', header: 'Client' },
         ]
       : [
-          { accessorKey: 'Title', header: 'Retirement / upgrade' },
+          { id: 'Title', accessorKey: 'Title', header: 'Retirement / upgrade' },
           {
+            id: 'RetirementDate',
             accessorKey: 'RetirementDate',
             header: 'Deadline',
             Cell: ({ cell }) => formatDate(cell.getValue()),
           },
-          { accessorKey: 'Deadline', header: 'Due in' },
-          { accessorKey: 'RequiredAction', header: 'Required action' },
-          { accessorKey: 'AdvisorState', header: 'Advisor state' },
+          { id: 'Deadline', accessorKey: 'Deadline', header: 'Due in' },
+          { id: 'RequiredAction', accessorKey: 'RequiredAction', header: 'Required action' },
+          { id: 'AdvisorState', accessorKey: 'AdvisorState', header: 'Advisor state' },
         ]),
     {
       id: 'details',
